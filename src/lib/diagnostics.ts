@@ -10,7 +10,7 @@ export type Diagnosis = {
   tecnico: { rotulo: string; valor: string }[];
 };
 
-const base: Record<string, Diagnosis> = {
+const base = {
   injecao: {
     titulo: "Luz da injeção eletrônica acesa",
     severidade: "atencao",
