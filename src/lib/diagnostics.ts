@@ -112,7 +112,7 @@ const base = {
       { rotulo: "Faixa de orçamento", valor: "R$ 0 – R$ 220 (diagnóstico)" },
     ],
   },
-};
+} satisfies Record<string, Diagnosis>;
 
 export function diagnose(input: string): Diagnosis {
   const t = input.toLowerCase();
