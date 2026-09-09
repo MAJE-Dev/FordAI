@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚗 Ford Project — Inovação & Conectividade
+# 🚗 Ford AI
 *Aplicação web interativa desenvolvida para o desafio acadêmico do 3º ano de Engenharia de Software (FIAP).*
 
 <p>
