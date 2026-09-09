@@ -36,7 +36,7 @@ Se você preferir clonar e rodar a aplicação na sua máquina, siga os passos a
 
 ```bash
 # Clone o repositório
-git clone [https://github.com/seu-usuario/seu-repositorio.git](https://github.com/seu-usuario/seu-repositorio.git)
+git clone [https://github.com/MAJE-Dev/FordAI.git](https://github.com/seu-usuario/seu-repositorio.git)
 
 # Entre na pasta do projeto
 cd nome-do-repositorio
