@@ -1,24 +1,48 @@
-# Pixel Perfect
+<div align="center">
 
-Implement exactly the screenshot and nothing else
+# 🚗 Ford Project — Inovação & Conectividade
+*Aplicação web interativa desenvolvida para o desafio acadêmico do 3º ano de Engenharia de Software (FIAP).*
 
-This project was built with [Lovable](https://lovable.dev).
+<p>
+  <a href="https://ford-ai.vercel.app/" target="_blank">
+    <img src="https://img.shields.io/badge/🚀_Acessar_Aplicação_Online-003366?style=for-the-badge&logo=ford&logoColor=white" alt="Deploy Link"/>
+  </a>
+</p>
 
-## Build with Lovable
+</div>
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/e89aa5f1-0cdf-462e-9c49-3af23a761306).
+---
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+### 💡 Sobre o Projeto
+Este repositório abriga o desenvolvimento de uma solução digital voltada para o ecossistema automotivo da **Ford**. Criado com foco em experiência do usuário, design limpo e alta performance, o projeto simula funcionalidades avançadas de interação com veículos conectados.
 
-## Development
+### 🛠️ Tecnologias Utilizadas
+O projeto foi construído utilizando tecnologias modernas de front-end para garantir agilidade, fluidez e um design impecável:
+* **TypeScript** — Tipagem estática e segurança no código.
+* **JavaScript (ES6+)** — Dinamismo e lógica da aplicação.
+* **CSS / Tailwind** — Estilização moderna, responsiva e alinhada ao conceito visual da marca.
+* **Lovable & React** — Agilidade de prototipagem e componentização inteligente.
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+### ✨ Principais Funcionalidades
+* 🖥️ Interface inspirada no ecossistema Ford (Pixel Perfect).
+* 📱 Design totalmente responsivo para desktop e dispositivos móveis.
+* ⚡ Navegação fluida e integrada com componentes modernos.
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
+---
+
+### 💻 Como Rodar o Projeto Localmente
+
+Se você preferir clonar e rodar a aplicação na sua máquina, siga os passos abaixo (certifique-se de ter o **Node.js** e o **npm** instalados):
+
+```bash
+# Clone o repositório
+git clone [https://github.com/seu-usuario/seu-repositorio.git](https://github.com/seu-usuario/seu-repositorio.git)
+
+# Entre na pasta do projeto
+cd nome-do-repositorio
+
+# Instale as dependências
 npm i
+
+# Inicie o servidor de desenvolvimento
 npm run dev
-```
