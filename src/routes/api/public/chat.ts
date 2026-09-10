@@ -32,7 +32,7 @@ Use os botões abaixo para **Solicitar Guincho Ford / Assistência 24h** ou **Ag
 
 Seja objetivo: no máximo ~250 palavras.`;
 
-export const Route = createFileRoute("/api/chat")({
+export const Route = createFileRoute("/api/public/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
