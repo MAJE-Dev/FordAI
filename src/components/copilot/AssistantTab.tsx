@@ -48,7 +48,7 @@ export function AssistantTab() {
     setStreaming(true);
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch("/api/public/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ messages: history, vehicle: VEHICLE }),
