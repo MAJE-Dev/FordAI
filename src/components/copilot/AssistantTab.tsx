@@ -1,17 +1,15 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import {
   ArrowUp,
   Paperclip,
   Sparkles,
-  ShieldAlert,
-  ShieldCheck,
   Truck,
   CheckCircle2,
   Loader2,
-  ClipboardCheck,
-  Copy,
+  CalendarClock,
+  AlertTriangle,
 } from "lucide-react";
-import { diagnose, severityLabel, type Diagnosis } from "@/lib/diagnostics";
 
 const suggestions = [
   "Luz da injeção acesa",
@@ -20,27 +18,96 @@ const suggestions = [
   "Ruído estranho no freio",
 ];
 
+const VEHICLE = "Ford Ranger XLT 2023, placa RGR-4C21";
+
+type Message = { role: "user" | "assistant"; content: string };
 type TowState = "idle" | "sending" | "sent";
+type ScheduleState = "idle" | "sending" | "sent";
 
 export function AssistantTab() {
   const [input, setInput] = useState("");
-  const [question, setQuestion] = useState<string | null>(null);
-  const [thinking, setThinking] = useState(false);
-  const [result, setResult] = useState<Diagnosis | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [streaming, setStreaming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [tow, setTow] = useState<TowState>("idle");
-  const [copied, setCopied] = useState(false);
+  const [schedule, setSchedule] = useState<ScheduleState>("idle");
+  const endRef = useRef<HTMLDivElement>(null);
 
-  function run(text: string) {
-    if (!text.trim()) return;
-    setQuestion(text);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, streaming]);
+
+  async function run(text: string) {
+    const content = text.trim();
+    if (!content || streaming) return;
+
+    const history: Message[] = [...messages, { role: "user", content }];
+    setMessages([...history, { role: "assistant", content: "" }]);
     setInput("");
-    setResult(null);
-    setTow("idle");
-    setThinking(true);
-    window.setTimeout(() => {
-      setResult(diagnose(text));
-      setThinking(false);
-    }, 900);
+    setError(null);
+    setStreaming(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages: history, vehicle: VEHICLE }),
+      });
+
+      if (!res.ok || !res.body) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Não foi possível obter a resposta da IA.");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let answer = "";
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          try {
+            const json = JSON.parse(payload);
+            const delta: string = json.choices?.[0]?.delta?.content ?? "";
+            if (delta) {
+              answer += delta;
+              setMessages((prev) => {
+                const next = [...prev];
+                next[next.length - 1] = { role: "assistant", content: answer };
+                return next;
+              });
+            }
+          } catch {
+            /* fragmento incompleto */
+          }
+        }
+      }
+
+      if (!answer) {
+        setMessages((prev) => {
+          const next = [...prev];
+          next[next.length - 1] = {
+            role: "assistant",
+            content:
+              "Não consegui gerar uma análise agora. Descreva o sintoma com mais detalhes ou acione a assistência abaixo.",
+          };
+          return next;
+        });
+      }
+    } catch (e) {
+      setMessages((prev) => prev.slice(0, -1));
+      setError(e instanceof Error ? e.message : "Falha na conexão com a IA.");
+    } finally {
+      setStreaming(false);
+    }
   }
 
   function requestTow() {
@@ -48,16 +115,13 @@ export function AssistantTab() {
     window.setTimeout(() => setTow("sent"), 1400);
   }
 
-  function copyReport() {
-    if (!result) return;
-    const text = [
-      `Resumo técnico Ford Copilot AI — ${result.titulo}`,
-      ...result.tecnico.map((t) => `${t.rotulo}: ${t.valor}`),
-    ].join("\n");
-    navigator.clipboard?.writeText(text);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+  function requestSchedule() {
+    setSchedule("sending");
+    window.setTimeout(() => setSchedule("sent"), 1200);
   }
+
+  const started = messages.length > 0;
+  const lastIsAssistant = messages[messages.length - 1]?.role === "assistant";
 
   return (
     <div className="mx-auto w-full max-w-3xl px-5 pb-28 pt-10 sm:pt-16">
@@ -74,7 +138,7 @@ export function AssistantTab() {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          run(input);
+          void run(input);
         }}
         className="mt-8 rounded-3xl surface p-4 transition-shadow focus-within:glow"
       >
@@ -84,7 +148,7 @@ export function AssistantTab() {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              run(input);
+              void run(input);
             }
           }}
           rows={2}
@@ -104,7 +168,7 @@ export function AssistantTab() {
             <button
               type="submit"
               className="flex h-9 w-9 items-center justify-center rounded-full ford-gradient text-primary-foreground transition-transform hover:scale-105 disabled:opacity-40"
-              disabled={!input.trim()}
+              disabled={!input.trim() || streaming}
               aria-label="Enviar"
             >
               <ArrowUp className="h-4 w-4" />
@@ -117,74 +181,52 @@ export function AssistantTab() {
         {suggestions.map((s) => (
           <button
             key={s}
-            onClick={() => run(s)}
-            className="rounded-full border border-border bg-card/60 px-4 py-2 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+            onClick={() => void run(s)}
+            disabled={streaming}
+            className="rounded-full border border-border bg-card/60 px-4 py-2 text-sm text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
           >
             {s}
           </button>
         ))}
       </div>
 
-      {question && (
-        <div className="mt-10 flex justify-end animate-rise">
-          <p className="max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-sm">
-            {question}
-          </p>
-        </div>
-      )}
-
-      {thinking && (
-        <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground animate-rise">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Analisando sinais do veículo...
-        </div>
-      )}
-
-      {result && (
-        <div className="mt-6 space-y-4">
-          <article className="rounded-3xl surface p-6 animate-rise">
-            <div className="flex flex-wrap items-center gap-3">
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
-                  result.seguro
-                    ? "bg-warning/15 text-warning"
-                    : "bg-destructive/15 text-destructive"
-                }`}
-              >
-                {result.seguro ? (
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                ) : (
-                  <ShieldAlert className="h-3.5 w-3.5" />
-                )}
-                {severityLabel[result.severidade]}
-              </span>
-            </div>
-            <h2 className="mt-4 text-xl font-semibold">{result.titulo}</h2>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{result.resumo}</p>
-
-            <div
-              className={`mt-5 rounded-2xl border p-4 text-sm ${
-                result.seguro
-                  ? "border-success/30 bg-success/10 text-foreground"
-                  : "border-destructive/30 bg-destructive/10 text-foreground"
-              }`}
-            >
-              <p className="font-semibold">
-                {result.seguro ? "Pode continuar rodando" : "Pare o veículo"}
+      <div className="mt-10 space-y-4">
+        {messages.map((m, i) =>
+          m.role === "user" ? (
+            <div key={i} className="flex justify-end animate-rise">
+              <p className="max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-sm">
+                {m.content}
               </p>
-              <p className="mt-1 text-muted-foreground">{result.podeRodar}</p>
             </div>
+          ) : (
+            <article key={i} className="rounded-3xl surface p-6 animate-rise">
+              {m.content ? (
+                <div className="space-y-3 text-sm leading-relaxed text-muted-foreground [&_h1]:text-lg [&_h1]:font-semibold [&_h1]:text-foreground [&_h2]:text-base [&_h2]:font-semibold [&_h2]:text-foreground [&_h3]:font-semibold [&_h3]:text-foreground [&_li]:ml-4 [&_li]:list-disc [&_ol_li]:list-decimal [&_strong]:text-foreground">
+                  <ReactMarkdown>{m.content}</ReactMarkdown>
+                  {streaming && i === messages.length - 1 && (
+                    <span className="inline-block h-4 w-[2px] animate-pulse bg-primary align-middle" />
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Analisando sinais do veículo...
+                </div>
+              )}
+            </article>
+          ),
+        )}
+      </div>
 
-            <ul className="mt-5 space-y-2">
-              {result.passos.map((p) => (
-                <li key={p} className="flex gap-2 text-sm text-muted-foreground">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  {p}
-                </li>
-              ))}
-            </ul>
-          </article>
+      {error && (
+        <div className="mt-4 flex items-start gap-3 rounded-2xl border border-destructive/30 bg-destructive/10 p-4 text-sm animate-rise">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <span>{error}</span>
+        </div>
+      )}
 
+      {started && lastIsAssistant && !streaming && (
+        <div className="mt-4 space-y-4">
           <div className="rounded-3xl surface p-6 animate-rise">
             {tow === "sent" ? (
               <div className="flex items-start gap-3">
@@ -220,33 +262,45 @@ export function AssistantTab() {
           </div>
 
           <div className="rounded-3xl surface p-6 animate-rise">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="flex items-center gap-2 text-sm font-semibold">
-                <ClipboardCheck className="h-4 w-4 text-primary" />
-                Resumo técnico para a concessionária
-              </h3>
-              <button
-                onClick={copyReport}
-                className="flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <Copy className="h-3.5 w-3.5" />
-                {copied ? "Copiado" : "Copiar"}
-              </button>
-            </div>
-            <dl className="mt-4 divide-y divide-border">
-              {result.tecnico.map((t) => (
-                <div key={t.rotulo} className="flex justify-between gap-6 py-3 text-sm">
-                  <dt className="text-muted-foreground">{t.rotulo}</dt>
-                  <dd className="text-right font-medium">{t.valor}</dd>
+            {schedule === "sent" ? (
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/20">
+                  <CheckCircle2 className="h-5 w-5 text-success" />
                 </div>
-              ))}
-            </dl>
-            <p className="mt-4 text-xs text-muted-foreground">
-              Enviado automaticamente à concessionária escolhida para adiantar orçamento e peças.
-            </p>
+                <div>
+                  <p className="font-semibold">Diagnóstico agendado</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Resumo da conversa enviado à concessionária para adiantar orçamento e peças.
+                    Você receberá a confirmação do horário por SMS.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={requestSchedule}
+                disabled={schedule === "sending"}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border px-5 py-4 text-sm font-semibold transition-colors hover:bg-secondary"
+              >
+                {schedule === "sending" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CalendarClock className="h-4 w-4" />
+                )}
+                {schedule === "sending"
+                  ? "Enviando pedido de agendamento..."
+                  : "Agendar Diagnóstico na Concessionária"}
+              </button>
+            )}
           </div>
+
+          <p className="text-center text-xs text-muted-foreground">
+            As orientações do Ford Copilot AI são preliminares. Confirme sempre com uma oficina
+            autorizada Ford.
+          </p>
         </div>
       )}
+
+      <div ref={endRef} />
     </div>
   );
 }
