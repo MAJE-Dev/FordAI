@@ -121,8 +121,7 @@ export function AssistantTab() {
   }
 
   const started = messages.length > 0;
-  const lastIsAssistant =
-    messages.length > 0 && messages[messages.length - 1].role === "assistant";
+  const lastIsAssistant = messages[messages.length - 1]?.role === "assistant";
 
   return (
     <div className="mx-auto w-full max-w-3xl px-5 pb-28 pt-10 sm:pt-16">
