@@ -46,3 +46,22 @@ npm i
 
 # Inicie o servidor de desenvolvimento
 npm run dev
+```
+
+---
+
+### ☁️ Deploy na Vercel (com o chat de IA funcionando)
+
+O chat com IA depende de uma chave de API que existe apenas no servidor. Para ela funcionar no domínio `ford-ai.vercel.app`:
+
+1. No painel da Vercel, abra **Project → Settings → Environment Variables**.
+2. Adicione a variável **`LOVABLE_API_KEY`** com a chave da IA do projeto (disponível nas configurações do projeto no Lovable).
+3. Configure o build:
+   - **Framework Preset:** Other
+   - **Build Command:** `npm run build`
+   - **Output Directory:** `dist`
+4. Faça o **Redeploy** em Deployments → Redeploy.
+
+> ⚠️ Importante: este projeto usa TanStack Start e o chat é respondido por uma rota de servidor (`/api/public/chat`). Se o deploy da Vercel servir apenas arquivos estáticos, a IA não funcionará mesmo com a chave — nesse caso, a alternativa é publicar pelo Lovable (botão **Publish**) e conectar um domínio próprio em **Project Settings → Domains**, onde tudo funciona sem configuração extra.
+
+Sem a variável `LOVABLE_API_KEY`, o chat exibe a mensagem "Serviço de IA não configurado" — é o comportamento esperado e seguro.
