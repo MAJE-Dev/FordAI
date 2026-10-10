@@ -1,5 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { offlineDiagnosis } from "@/lib/offline-diagnosis";
+
+const MAX_IMAGE_CHARS = 4_000_000;
 
 const BodySchema = z.object({
   messages: z
@@ -7,6 +10,12 @@ const BodySchema = z.object({
       z.object({
         role: z.enum(["user", "assistant"]),
         content: z.string().min(1).max(4000),
+        // Foto do painel/veículo (data URL jpeg/png/webp), só aceita em mensagens do usuário.
+        image: z
+          .string()
+          .max(MAX_IMAGE_CHARS)
+          .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/)
+          .optional(),
       }),
     )
     .min(1)
@@ -30,62 +39,140 @@ Regras de segurança: nunca dê um diagnóstico definitivo nem oriente reparos q
 Encerre SEMPRE a resposta com a linha exata:
 Use os botões abaixo para **Solicitar Guincho Ford / Assistência 24h** ou **Agendar Diagnóstico na Concessionária**.
 
+Se o motorista enviar uma foto, descreva o que vê (luzes do painel, cor e símbolo, componentes visíveis) antes de analisar; se a imagem não for legível ou não for de um veículo, peça outra foto.
+
 Seja objetivo: no máximo ~250 palavras.`;
+
+type ChatMessage = z.infer<typeof BodySchema>["messages"][number];
+
+const json = (body: unknown, status: number) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+// Converte a mensagem para o formato OpenAI; fotos só vão na última mensagem do usuário
+// para não reenviar megabytes a cada turno.
+function toUpstream(messages: ChatMessage[]) {
+  return messages.map((m, i) => {
+    const isLast = i === messages.length - 1;
+    if (m.role === "user" && m.image && isLast) {
+      return {
+        role: "user",
+        content: [
+          { type: "text", text: m.content },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+}
+
+type Provider = { url: string; headers: Record<string, string>; model: string };
+
+// GEMINI_API_KEY (Google AI Studio) funciona em qualquer host, ex.: Vercel.
+// LOVABLE_API_KEY é usada quando o app roda no Lovable.
+function pickProvider(): Provider | null {
+  const gemini = process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
+  if (gemini) {
+    return {
+      url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      headers: { authorization: `Bearer ${gemini}` },
+      model: process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash",
+    };
+  }
+  const lovable = process.env["LOVABLE_API_KEY"];
+  if (lovable) {
+    return {
+      url: "https://ai.gateway.lovable.dev/v1/chat/completions",
+      headers: {
+        authorization: `Bearer ${lovable}`,
+        "Lovable-API-Key": lovable,
+        "X-Lovable-AIG-SDK": "fetch",
+      },
+      model: "google/gemini-3.8-flash",
+    };
+  }
+  return null;
+}
+
+// Emite a resposta de contingência no mesmo formato SSE do provedor, para o cliente não mudar.
+function offlineStream(text: string) {
+  const encoder = new TextEncoder();
+  const chunks = text.match(/[\s\S]{1,24}/g) ?? [];
+  let i = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (i >= chunks.length) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        return;
+      }
+      const delta = { choices: [{ delta: { content: chunks[i++] } }] };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
+      await new Promise((r) => setTimeout(r, 15));
+    },
+  });
+  return new Response(body, {
+    headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
+  });
+}
 
 export const Route = createFileRoute("/api/public/chat")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const apiKey = process.env["LOVABLE_API_KEY"];
-        if (!apiKey) {
-          return new Response(JSON.stringify({ error: "Serviço de IA não configurado." }), {
-            status: 500,
-            headers: { "content-type": "application/json" },
-          });
-        }
-
         let parsed;
         try {
           parsed = BodySchema.parse(await request.json());
         } catch {
-          return new Response(JSON.stringify({ error: "Requisição inválida." }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          });
+          return json({ error: "Requisição inválida." }, 400);
         }
+
+        const last = parsed.messages[parsed.messages.length - 1];
+        const lastUser = [...parsed.messages].reverse().find((m) => m.role === "user");
+        const fallback = () =>
+          offlineStream(offlineDiagnosis(lastUser?.content ?? "", Boolean(last?.image)));
+
+        const provider = pickProvider();
+        if (!provider) return fallback();
 
         const vehicle = parsed.vehicle ?? "Ford Ranger XLT 2023, placa RGR-4C21";
 
-        const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "Lovable-API-Key": apiKey,
-            "X-Lovable-AIG-SDK": "fetch",
-          },
-          body: JSON.stringify({
-            model: "google/gemini-3.8-flash",
-            stream: true,
-            messages: [
-              { role: "system", content: SYSTEM_PROMPT },
-              { role: "system", content: `Veículo do motorista: ${vehicle}.` },
-              ...parsed.messages,
-            ],
-          }),
-        });
+        let res: Response;
+        try {
+          res = await fetch(provider.url, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...provider.headers },
+            body: JSON.stringify({
+              model: provider.model,
+              stream: true,
+              messages: [
+                { role: "system", content: SYSTEM_PROMPT },
+                { role: "system", content: `Veículo do motorista: ${vehicle}.` },
+                ...toUpstream(parsed.messages),
+              ],
+            }),
+          });
+        } catch {
+          return fallback();
+        }
 
         if (!res.ok || !res.body) {
-          const detail = await res.text().catch(() => "");
-          const message =
-            res.status === 429
-              ? "Muitas solicitações agora. Tente novamente em alguns segundos."
-              : res.status === 402
-                ? "Os créditos de IA do app acabaram. Adicione créditos para continuar."
-                : `Não foi possível falar com a IA (${res.status}). ${detail.slice(0, 200)}`;
-          return new Response(JSON.stringify({ error: message }), {
-            status: res.status,
-            headers: { "content-type": "application/json" },
-          });
+          if (res.status === 429) {
+            return json(
+              { error: "Muitas solicitações agora. Tente novamente em alguns segundos." },
+              429,
+            );
+          }
+          // 402 (sem créditos), chave inválida, modelo indisponível etc.: não deixa o motorista sem resposta.
+          console.error(
+            "[chat] upstream error",
+            res.status,
+            (await res.text().catch(() => "")).slice(0, 300),
+          );
+          return fallback();
         }
 
         return new Response(res.body, {

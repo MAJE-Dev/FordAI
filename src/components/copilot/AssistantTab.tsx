@@ -9,6 +9,7 @@ import {
   Loader2,
   CalendarClock,
   AlertTriangle,
+  X,
 } from "lucide-react";
 
 const suggestions = [
@@ -20,7 +21,38 @@ const suggestions = [
 
 const VEHICLE = "Ford Ranger XLT 2023, placa RGR-4C21";
 
-type Message = { role: "user" | "assistant"; content: string };
+type Message = { role: "user" | "assistant"; content: string; image?: string };
+
+const IMAGE_ONLY_PROMPT =
+  "Analise a foto anexada (painel, luz de alerta ou peça do meu Ford) e diga o que ela indica.";
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
+const MAX_SIDE = 1280;
+
+// Redimensiona e comprime a foto no navegador (fotos de celular passam de 5 MB).
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("canvas"));
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image"));
+    };
+    img.src = url;
+  });
+}
 type TowState = "idle" | "sending" | "sent";
 type ScheduleState = "idle" | "sending" | "sent";
 
@@ -31,19 +63,46 @@ export function AssistantTab() {
   const [error, setError] = useState<string | null>(null);
   const [tow, setTow] = useState<TowState>("idle");
   const [schedule, setSchedule] = useState<ScheduleState>("idle");
+  const [image, setImage] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, streaming]);
 
+  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Selecione um arquivo de imagem (JPG, PNG ou WebP).");
+      return;
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      setError("A imagem é muito grande. Escolha uma foto de até 15 MB.");
+      return;
+    }
+    try {
+      setImage(await fileToDataUrl(file));
+      setError(null);
+    } catch {
+      setError("Não foi possível ler essa imagem. Tente outro arquivo (JPG ou PNG).");
+    }
+  }
+
   async function run(text: string) {
-    const content = text.trim();
+    const attached = image;
+    const content = text.trim() || (attached ? IMAGE_ONLY_PROMPT : "");
     if (!content || streaming) return;
 
-    const history: Message[] = [...messages, { role: "user", content }];
+    const history: Message[] = [
+      ...messages,
+      { role: "user", content, ...(attached ? { image: attached } : {}) },
+    ];
     setMessages([...history, { role: "assistant", content: "" }]);
     setInput("");
+    setImage(null);
     setError(null);
     setStreaming(true);
 
@@ -51,7 +110,10 @@ export function AssistantTab() {
       const res = await fetch("/api/public/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: history, vehicle: VEHICLE }),
+        body: JSON.stringify({
+          messages: history.map(({ role, content, image }) => ({ role, content, image })),
+          vehicle: VEHICLE,
+        }),
       });
 
       if (!res.ok || !res.body) {
@@ -155,9 +217,35 @@ export function AssistantTab() {
           placeholder="Como posso ajudar com o seu Ford hoje? Ou descreva/anexe o alerta do painel..."
           className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
         />
+        {image && (
+          <div className="relative mt-2 inline-block">
+            <img
+              src={image}
+              alt="Foto anexada"
+              className="h-20 w-20 rounded-xl border border-border object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => setImage(null)}
+              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-foreground shadow"
+              aria-label="Remover imagem"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => void onPickFile(e)}
+          className="hidden"
+        />
         <div className="mt-3 flex items-center justify-between">
           <button
             type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={streaming}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             aria-label="Anexar foto do painel"
           >
@@ -168,7 +256,7 @@ export function AssistantTab() {
             <button
               type="submit"
               className="flex h-9 w-9 items-center justify-center rounded-full ford-gradient text-primary-foreground transition-transform hover:scale-105 disabled:opacity-40"
-              disabled={!input.trim() || streaming}
+              disabled={(!input.trim() && !image) || streaming}
               aria-label="Enviar"
             >
               <ArrowUp className="h-4 w-4" />
@@ -194,9 +282,18 @@ export function AssistantTab() {
         {messages.map((m, i) =>
           m.role === "user" ? (
             <div key={i} className="flex justify-end animate-rise">
-              <p className="max-w-[85%] rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-sm">
-                {m.content}
-              </p>
+              <div className="flex max-w-[85%] flex-col items-end gap-2">
+                {m.image && (
+                  <img
+                    src={m.image}
+                    alt="Foto enviada"
+                    className="max-h-48 rounded-2xl border border-border object-cover"
+                  />
+                )}
+                <p className="rounded-2xl rounded-br-md bg-secondary px-4 py-3 text-sm">
+                  {m.content}
+                </p>
+              </div>
             </div>
           ) : (
             <article key={i} className="rounded-3xl surface p-6 animate-rise">
